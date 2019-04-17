@@ -2,7 +2,6 @@ package qcode
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/dosco/super-graph/util"
@@ -25,6 +24,7 @@ type Column struct {
 
 type Select struct {
 	ID         int16
+	Args       map[string]*Node
 	AsList     bool
 	Table      string
 	Singular   string
@@ -61,7 +61,8 @@ type Paging struct {
 type ExpOp int
 
 const (
-	OpAnd ExpOp = iota + 1
+	OpNop ExpOp = iota
+	OpAnd
 	OpOr
 	OpNot
 	OpEquals
@@ -85,12 +86,15 @@ const (
 	OpHasKeyAll
 	OpIsNull
 	OpEqID
+	OpTsQuery
 )
 
 func (t ExpOp) String() string {
 	var v string
 
 	switch t {
+	case OpNop:
+		v = "op-nop"
 	case OpAnd:
 		v = "op-and"
 	case OpOr:
@@ -139,6 +143,8 @@ func (t ExpOp) String() string {
 		v = "op-is-null"
 	case OpEqID:
 		v = "op-eq-id"
+	case OpTsQuery:
+		v = "op-ts-query"
 	}
 	return fmt.Sprintf("<%s>", v)
 }
@@ -176,25 +182,41 @@ const (
 	OrderDescNullsLast
 )
 
-type FilterMap map[string]*Exp
-type Blacklist *regexp.Regexp
+type Config struct {
+	Filter    []string
+	FilterMap map[string][]string
+	Blacklist []string
+}
 
-func CompileFilter(filter string) (*Exp, error) {
-	node, err := ParseArgValue(filter)
+type Compiler struct {
+	fl *Exp
+	fm map[string]*Exp
+	bl map[string]struct{}
+}
+
+func NewCompiler(conf Config) (*Compiler, error) {
+	bl := make(map[string]struct{}, len(conf.Blacklist))
+
+	for i := range conf.Blacklist {
+		bl[strings.ToLower(conf.Blacklist[i])] = struct{}{}
+	}
+
+	fl, err := compileFilter(conf.Filter)
 	if err != nil {
 		return nil, err
 	}
 
-	return (&Compiler{}).compileArgNode(node)
-}
+	fm := make(map[string]*Exp, len(conf.FilterMap))
 
-type Compiler struct {
-	fm FilterMap
-	bl *regexp.Regexp
-}
+	for k, v := range conf.FilterMap {
+		fil, err := compileFilter(v)
+		if err != nil {
+			return nil, err
+		}
+		fm[strings.ToLower(k)] = fil
+	}
 
-func NewCompiler(fm FilterMap, bl Blacklist) *Compiler {
-	return &Compiler{fm, bl}
+	return &Compiler{fl, fm, bl}, nil
 }
 
 func (com *Compiler) CompileQuery(query string) (*QCode, error) {
@@ -227,7 +249,7 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 
 	st := util.NewStack()
 	id := int16(0)
-	fmap := make(map[*Field]*Select)
+	fs := make([]*Select, op.FieldLen)
 
 	for i := range op.Fields {
 		st.Push(op.Fields[i])
@@ -245,11 +267,10 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 			return nil, fmt.Errorf("unexpected value poped out %v", intf)
 		}
 
-		if com.bl != nil && com.bl.MatchString(field.Name) {
+		fn := strings.ToLower(field.Name)
+		if _, ok := com.bl[fn]; ok {
 			continue
 		}
-
-		fn := strings.ToLower(field.Name)
 		tn := flect.Pluralize(fn)
 
 		s := &Select{
@@ -278,7 +299,7 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 		}
 
 		id++
-		fmap[field] = s
+		fs[field.ID] = s
 
 		err := com.compileArgs(s, field.Args)
 		if err != nil {
@@ -289,7 +310,7 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 			f := field.Children[i]
 			fn := strings.ToLower(f.Name)
 
-			if com.bl != nil && com.bl.MatchString(fn) {
+			if _, ok := com.bl[fn]; ok {
 				continue
 			}
 
@@ -309,14 +330,18 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 
 		if field.Parent == nil {
 			selRoot = s
-		} else if sp, ok := fmap[field.Parent]; ok {
-			sp.Joins = append(sp.Joins, s)
 		} else {
-			return nil, fmt.Errorf("no select found for parent %#v", field.Parent)
+			sp := fs[field.Parent.ID]
+			sp.Joins = append(sp.Joins, s)
 		}
 	}
 
-	if fil, ok := com.fm[selRoot.Table]; ok {
+	fil, ok := com.fm[selRoot.Table]
+	if !ok {
+		fil = com.fl
+	}
+
+	if fil != nil && fil.Op != OpNop {
 		if selRoot.Where != nil {
 			selRoot.Where = &Exp{Op: OpAnd, Children: []*Exp{fil, selRoot.Where}}
 		} else {
@@ -330,17 +355,24 @@ func (com *Compiler) compileQuery(op *Operation) (*Query, error) {
 func (com *Compiler) compileArgs(sel *Select, args []*Arg) error {
 	var err error
 
+	sel.Args = make(map[string]*Node, len(args))
+
 	for i := range args {
 		if args[i] == nil {
 			return fmt.Errorf("[Args] unexpected nil argument found")
 		}
 		an := strings.ToLower(args[i].Name)
+		if _, ok := sel.Args[an]; ok {
+			continue
+		}
 
 		switch an {
 		case "id":
 			if sel.ID == int16(0) {
 				err = com.compileArgID(sel, args[i])
 			}
+		case "search":
+			err = com.compileArgSearch(sel, args[i])
 		case "where":
 			err = com.compileArgWhere(sel, args[i])
 		case "orderby", "order_by", "order":
@@ -356,6 +388,8 @@ func (com *Compiler) compileArgs(sel *Select, args []*Arg) error {
 		if err != nil {
 			return err
 		}
+
+		sel.Args[an] = args[i].Val
 	}
 
 	return nil
@@ -368,7 +402,7 @@ type expT struct {
 
 func (com *Compiler) compileArgObj(arg *Arg) (*Exp, error) {
 	if arg.Val.Type != nodeObj {
-		return nil, fmt.Errorf("[Where] expecting an object")
+		return nil, fmt.Errorf("expecting an object")
 	}
 
 	return com.compileArgNode(arg.Val)
@@ -388,12 +422,13 @@ func (com *Compiler) compileArgNode(val *Node) (*Exp, error) {
 		intf := st.Pop()
 		eT, ok := intf.(*expT)
 		if !ok || eT == nil {
-			return nil, fmt.Errorf("[Where] unexpected value poped out %v", intf)
+			return nil, fmt.Errorf("unexpected value poped out %v", intf)
 		}
 
-		if len(eT.node.Name) != 0 &&
-			com.bl != nil && com.bl.MatchString(eT.node.Name) {
-			continue
+		if len(eT.node.Name) != 0 {
+			if _, ok := com.bl[strings.ToLower(eT.node.Name)]; ok {
+				continue
+			}
 		}
 
 		ex, err := newExp(st, eT)
@@ -438,16 +473,33 @@ func (com *Compiler) compileArgID(sel *Select, arg *Arg) error {
 	return nil
 }
 
+func (com *Compiler) compileArgSearch(sel *Select, arg *Arg) error {
+	ex := &Exp{
+		Op:   OpTsQuery,
+		Type: ValStr,
+		Val:  arg.Val.Val,
+	}
+
+	if sel.Where != nil {
+		sel.Where = &Exp{Op: OpAnd, Children: []*Exp{ex, sel.Where}}
+	} else {
+		sel.Where = ex
+	}
+	return nil
+}
+
 func (com *Compiler) compileArgWhere(sel *Select, arg *Arg) error {
 	var err error
 
-	if sel.Where != nil {
-		return nil
-	}
-
-	sel.Where, err = com.compileArgObj(arg)
+	ex, err := com.compileArgObj(arg)
 	if err != nil {
 		return err
+	}
+
+	if sel.Where != nil {
+		sel.Where = &Exp{Op: OpAnd, Children: []*Exp{ex, sel.Where}}
+	} else {
+		sel.Where = ex
 	}
 
 	return nil
@@ -476,7 +528,7 @@ func (com *Compiler) compileArgOrderBy(sel *Select, arg *Arg) error {
 			return fmt.Errorf("OrderBy: unexpected value poped out %v", intf)
 		}
 
-		if com.bl != nil && com.bl.MatchString(node.Name) {
+		if _, ok := com.bl[strings.ToLower(node.Name)]; ok {
 			continue
 		}
 
@@ -516,7 +568,7 @@ func (com *Compiler) compileArgOrderBy(sel *Select, arg *Arg) error {
 func (com *Compiler) compileArgDistinctOn(sel *Select, arg *Arg) error {
 	node := arg.Val
 
-	if com.bl != nil && com.bl.MatchString(node.Name) {
+	if _, ok := com.bl[strings.ToLower(node.Name)]; ok {
 		return nil
 	}
 
@@ -738,4 +790,30 @@ func pushChildren(st *util.Stack, ex *Exp, node *Node) {
 	for i := range node.Children {
 		st.Push(&expT{ex, node.Children[i]})
 	}
+}
+
+func compileFilter(filter []string) (*Exp, error) {
+	var fl *Exp
+	com := &Compiler{}
+
+	if len(filter) == 0 {
+		return &Exp{Op: OpNop}, nil
+	}
+
+	for i := range filter {
+		node, err := ParseArgValue(filter[i])
+		if err != nil {
+			return nil, err
+		}
+		f, err := com.compileArgNode(node)
+		if err != nil {
+			return nil, err
+		}
+		if fl == nil {
+			fl = f
+		} else {
+			fl = &Exp{Op: OpAnd, Children: []*Exp{fl, f}}
+		}
+	}
+	return fl, nil
 }

@@ -22,18 +22,28 @@ Without writing a line of code get an instant high-performance GraphQL API for y
 ## Try it out
 
 ```bash
-# setup the demo rails app database
-docker-compose run web rake db:create db:migrate db:seed
+# download super graph source
+git clone https://github.com/dosco/super-graph.git
 
-# run the demo rails app and the Super Graph service
-docker-compose -f docker-compose.image.yml up
+# setup the demo rails app & database
+./demo setup
 
-# try out the GraphQL api with the web ui in your browser
+# run the demo
+./demo run
+
+# signin to the demo app (user1@demo.com / 123456)
+open http://localhost:3000
+
+# try the super graph web ui
 open http://localhost:8080
-
 ```
 
-## Try this GraphQL query
+::: warning DEMO REQUIREMENTS  
+This demo requires `docker` you can either install it using `brew` or from the 
+docker website [https://docs.docker.com/docker-for-mac/install/](https://docs.docker.com/docker-for-mac/install/)
+:::
+
+## Try out GraphQL
 
 ```graphql 
 query { 
@@ -52,15 +62,11 @@ query {
 
 ## Why I built Super Graph?
 
-I have a Rails app that gets a bit of traffic. While planning to improve the UI using React or Vue I found that my current APIs didn't have what we needed. I'd have to add more controllers and ensure they are providing the right amount of data. This required designing new APIs and making sure they match what the webdevs need. While this is all to common work I was bored and there had to be a better way.
+Honestly, cause it was more fun than my real work. After working on several product though my career I found myself hating building CRUD APIs (Create, Update, Delete, List, Show). It was always the same thing figure out what the UI needs then build an endpoint for it, if related data is needed than join with another table. I didn't want to write that code anymore I wanted the computer to just do it.
 
-All my Rails controllers were esentially wrappers around database queries and its not exactly fun writing more of them.
+I always liked GraphQL it sounded friendly, but it still required me to write all the same database query code. Sure the API was nicer but it took a lot of work sometime even more than a simple REST API would have. I wanted a GraphQL server that just worked the second you deployed it without having to write a line of code.
 
-I always liked GraphQL it made everything so simple. Web devs can use GraphQL to fetch exactly the data they need. There is one small issue however you still hasve to write a lot of the same database code.
-
-I wanted a GraphQL server that just worked the second you deployed it without having to write a line of code.
-
-And so after a lot of coffee and some avocado toasts Super Graph was born. An instant GraphQL API service that's high performance and easy to deploy. I hope you find it as useful as I do and there's a lot more coming so hit that :star: to stay in the loop.
+And so after a lot of coffee and some Avocado toasts __Super Graph was born, a GraphQL server that just works, is high performance and easy to deploy__. I hope you find it as useful as I do and there's a lot more coming so hit that :star: to stay in the loop.
 
 ## Say hello 
 

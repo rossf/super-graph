@@ -7,22 +7,49 @@ sidebar: auto
 Without writing a line of code get an instant high-performance GraphQL API for your Ruby-on-Rails app. Super Graph will automatically understand your apps database and expose a secure, fast and complete GraphQL API for it. Built in support for Rails authentication and JWT tokens.
 
 ## Features
-- Support for Rails database conventions
+- Works with Rails database schemas
+- Automatically learns schemas and relationships
 - Belongs-To, One-To-Many and Many-To-Many table relationships
-- Devise, Warden encrypted and signed session cookies
-- Redis, Memcache and Cookie session stores
-- JWT tokens supported from providers like Auth0
-- Generates highly optimized and fast Postgres SQL queries
-- Customize through a simple config file
+- Full text search and Aggregations
+- Rails Auth supported (Redis, Memcache, Cookie)
+- JWT tokens supported (Auth0, etc)
+- Highly optimized and fast Postgres SQL queries
+- Configure with a simple config file
 - High performance GO codebase
 - Tiny docker image and low memory requirements
+
+## Try it out
+
+```bash
+# download super graph source
+git clone https://github.com/dosco/super-graph.git
+
+# setup the demo rails app & database
+./demo setup
+
+# run the demo
+./demo run
+
+# signin to the demo app (user1@demo.com / 123456)
+open http://localhost:3000
+
+# try the super graph web ui
+open http://localhost:8080
+```
+
+::: warning DEMO REQUIREMENTS
+This demo requires `docker` you can either install it using `brew` or from the
+docker website [https://docs.docker.com/docker-for-mac/install/](https://docs.docker.com/docker-for-mac/install/)
+:::
+
+#### Trying out GraphQL
 
 We currently support the `query` action which is used for fetching data. Support for `mutation` and `subscriptions` is work in progress. For example the below GraphQL query would fetch two products that belong to the current user where the price is greater than 10
 
 #### GQL Query
 
 ```graphql
-query { 
+query {
   users {
     id
     email
@@ -40,7 +67,7 @@ query {
 ```
 
 The above GraphQL query returns the JSON result below. It handles all
-kinds of complexity without you having to writing a line of code. 
+kinds of complexity without you having to writing a line of code.
 
 For example there is a while greater than `gt` and a limit clause on a child field. And the `avatar` field is renamed to `picture`. The `password` field is blocked and not returned. Finally the relationship between the `users` table and the `products` table is auto discovered and used.
 
@@ -68,26 +95,6 @@ For example there is a while greater than `gt` and a limit clause on a child fie
     ]
   }
 }
-```
-
-The above command will download the latest docker image for Super Graph and use it to run an example that includes a Postgres DB and a simple Rails ecommerce store app. 
-
-If you want to build and run Super Graph from code then the below commands will build the web ui and launch Super Graph in developer mode with a watcher to rebuild on code changes.
-
-```bash
-
-# yarn is needed to build the web ui
-brew install yarn
-
-# yarn install dependencies and build the web ui
-(cd web && yarn install && yarn build)
-
-# generate some stuff the go code needs
-go generate ./...
-
-# start super graph in development mode with a change watcher
-docker-compose up
-
 ```
 
 #### Try with an authenticated user
@@ -122,6 +129,8 @@ query {
 }
 ```
 
+### Fetching data
+
 To fetch a specific `product` by it's ID you can use the `id` argument. The real name id field will be resolved automatically so this query will work even if your id column is named something like `product_id`.
 
 ```graphql
@@ -131,6 +140,18 @@ query {
   }
 }
 ```
+
+Postgres also supports full text search using a TSV index. Super Graph makes it easy to use this full text search capability using the `search` argument.
+
+```graphql
+query {
+  products(search "amazing") {
+    name
+  }
+}
+```
+
+### Complex queries (Where)
 
 Super Graph support complex queries where you can add filters, ordering,offsets and limits on the query.
 
@@ -146,7 +167,7 @@ not | not: { or : { quantity : { eq: 0 }, price : { eq: 0 } } } | NOT (quantity 
 
 Name | Example | Explained |
 --- | --- | --- |
-eq, equals | id : { eq: 100 } | id = 100 
+eq, equals | id : { eq: 100 } | id = 100
 neq, not_equals | id: { not_equals: 100 } | id != 100
 gt, greater_than | id: { gt: 100 } | id > 100
 lt, lesser_than | id: { gt: 100 } | id < 100
@@ -167,7 +188,7 @@ contains | column: { contains: [1, 2, 4] } | Is this array/json column a subset 
 contained_in | column: { contains: "{'a':1, 'b':2}" } | Is this array/json column a subset of these value
 is_null | column: { is_null: true } | Is column value null or not
 
-#### Aggregation
+### Aggregation (Max, Count, etc)
 
 You will often find the need to fetch aggregated values from the database such as `count`, `max`, `min`, etc. This is simple to do with GraphQL, just prefix the aggregation name to the field name that you want to aggregrate like `count_id`. The below query will group products by name and find the minimum price for each group. Notice the `min_price` field we're adding `min_` to price.
 
@@ -209,7 +230,7 @@ query {
 
     # no duplicate prices returned
     distinct: [ price ]
-    
+
     # only items with an id >= 30 and < 30 are returned
     where: { id: { and: { greater_or_equals: 20, lt: 28 } } }) {
     id
@@ -219,127 +240,161 @@ query {
 }
 ```
 
-## It's easy to setup
+### Full text search
 
-Configuration files can either be in YAML or JSON their names are derived from the `GO_ENV` variable, for example `GO_ENV=prod` will cause the `prod.yaml` config file to be used. or `GO_ENV=dev` will use the `dev.yaml`. A path to look for the config files in can be specified using the `-path <folder>` command line argument.
+Every app these days needs search. Enought his often means reaching for something heavy like Solr. While this will work why add complexity to your infrastructure when Postgres has really great
+and fast full text search built-in. And since it's part of Postgres it's also available in Super Graph.
 
-```yaml
-host_port: 0.0.0.0:8080
-web_ui: true
-debug_level: 1
+```graphql
+query {
+  products(
+    # Search for all products that contain 'ale' or some version of it
+    search: "ale"
 
-# When to throw a 401 on auth failure 
-# valid values: always, per_query, never
-auth_fail_block: never
+    # Return only matches where the price is less than 10
+    where: { price: { lt: 10 } }
 
-# Postgres related environment Variables
-# SG_DATABASE_HOST
-# SG_DATABASE_PORT
-# SG_DATABASE_USER
-# SG_DATABASE_PASSWORD
-
-# Auth related environment Variables
-# SG_AUTH_SECRET_KEY_BASE
-# SG_AUTH_PUBLIC_KEY_FILE
-# SG_AUTH_URL
-# SG_AUTH_PASSWORD
-
-# inflections:
-#   person: people
-#   sheep: sheep
-
-auth:
-  type: header
-  field_name: X-User-ID
-
-# auth:
-#   type: rails
-#   cookie: _app_session
-#   store: cookie
-#   secret_key_base: caf335bfcfdb04e50db5bb0a4d67ab9...
-
-# auth:
-#   type: rails
-#   cookie: _app_session
-#   store: memcache
-#   host: 127.0.0.1
-
-# auth:
-#   type: rails
-#   cookie: _app_session
-#   store: redis
-#   max_idle: 80,
-#   max_active: 12000,
-#   url: redis://127.0.0.1:6379
-#   password: ""
-
-# auth:
-#   type: jwt
-#   cookie: _app_session
-#   secret: abc335bfcfdb04e50db5bb0a4d67ab9
-#   public_key_file: /secrets/public_key.pem
-#   public_key_type: ecdsa #rsa
-
-database:
-  type: postgres
-  host: db
-  port: 5432
-  dbname: app_development
-  user: postgres
-  password: ''
-  #pool_size: 10
-  #max_retries: 0
-  #log_level: "debug" 
-
-  # Define variables here that you want to use in filters 
-  variables:
-    account_id: "select account_id from users where id = $user_id"
-
-  # Used to add access to tables 
-  filters:
-    users: "{ id: { _eq: $user_id } }"
-    posts: "{ account_id: { _eq: $account_id } }"
-
-  # Fields and table names that you wish to block
-  blacklist:
-    - secret
-    - password
-    - encrypted
-    - token
+    # Use the search_rank to order from the best match to the worst
+    order_by: { search_rank: desc }) {
+    id
+    name
+    search_rank
+   	search_headline_description
+  }
+}
 ```
 
-If deploying into environments like Kubernetes it's useful to be able to configure things like secrets and hosts though environment variables therfore we expose the below environment variables. This is escpecially useful for secrets since they are usually injected in via a secrets management framework ie. Kubernetes Secrets
+This query will use the `tsvector` column in your database table to search for products that contain the query phrase or some version of it. To get the internal relevance ranking for the search results using the `search_rank` field. And to get the highlighted context within any of the table columns you can use the `search_headline_` field prefix. For example `search_headline_name` will return the contents of the products name column which contains the matching query marked with the `<b></b>` html tags.
 
-#### Postgres related environment Variables
-```bash
-SG_DATABASE_HOST
-SG_DATABASE_PORT
-SG_DATABASE_USER
-SG_DATABASE_PASSWORD
+```json
+{
+  "data": {
+    "products": [
+      {
+        "id": 11,
+        "name": "Maharaj",
+        "search_rank": 0.243171,
+        "search_headline_description": "Blue Moon, Vegetable Beer, Willamette, 1007 - German <b>Ale</b>, 48 IBU, 7.9%, 11.8°Blg"
+      },
+      {
+        "id": 12,
+        "name": "Schneider Aventinus",
+        "search_rank": 0.243171,
+        "search_headline_description": "Dos Equis, Wood-aged Beer, Magnum, 1099 - Whitbread <b>Ale</b>, 15 IBU, 9.5%, 13.0°Blg"
+      },
+  ...
 ```
 
-#### Auth related environment Variables
-```bash
-SG_AUTH_SECRET_KEY_BASE
-SG_AUTH_PUBLIC_KEY_FILE
-SG_AUTH_URL
-SG_AUTH_PASSWORD
+#### Adding search to your Rails app
+
+It's really easy to enable Postgres search on any table within your database schema. All it takes is to create the following migration. In the below example we add a full-text search to the `products` table.
+
+```ruby
+class AddSearchColumn < ActiveRecord::Migration[5.1]
+  def self.up
+    add_column :products, :tsv, :tsvector
+    add_index :products, :tsv, using: "gin"
+
+    say_with_time("Adding trigger to update the ts_vector column") do
+      execute <<-SQL
+        CREATE FUNCTION products_tsv_trigger() RETURNS trigger AS $$
+        begin
+          new.tsv :=
+          setweight(to_tsvector('pg_catalog.english', coalesce(new.name,'')), 'A') ||
+          setweight(to_tsvector('pg_catalog.english', coalesce(new.description,'')), 'B');
+          return new;
+        end
+        $$ LANGUAGE plpgsql;
+
+        CREATE TRIGGER tsvectorupdate BEFORE INSERT OR UPDATE ON products FOR EACH ROW EXECUTE PROCEDURE products_tsv_trigger();
+        SQL
+      end
+  end
+
+  def self.down
+    say_with_time("Removing trigger to update the tsv column") do
+      execute <<-SQL
+        DROP TRIGGER tsvectorupdate
+        ON products
+        SQL
+    end
+
+    remove_index :products, :tsv
+    remove_column :products, :tsv
+  end
+end
 ```
 
 ## Authentication
 
-You can only have one type of auth enabled. You can either pick Rails or JWT. Uncomment the one you use and leave the rest commented out.
+You can only have one type of auth enabled. You can either pick Rails or JWT. 
 
-#### JWT Tokens
+### Rails Auth (Devise / Warden)
+
+Almost all Rails apps use Devise or Warden for authentication. Once the user is
+authenticated a session is created with the users ID. The session can either be
+stored in the users browser as a cookie, memcache or redis. If memcache or redis is used then a cookie is set in the users browser with just the session id.
+
+Super Graph can handle all these variations including the old and new session formats. Just enable the right `auth` config based on how your rails app is configured.
+
+#### Cookie session store
+
+```yaml
+auth:
+  type: rails
+  cookie: _app_session
+
+  rails:
+    # Rails version this is used for reading the
+    # various cookies formats.
+    version: 5.2
+
+    # Found in 'Rails.application.config.secret_key_base'
+    secret_key_base: 0a248500a64c01184edb4d7ad3a805488f8097ac761b76aaa6c17c01dcb7af03a2f18ba61b2868134b9c7b79a122bc0dadff4367414a2d173297bfea92be5566
+
+```
+
+
+
+#### Memcache session store
+
+```yaml
+auth:
+  type: rails
+  cookie: _app_session
+
+  rails:
+    # Memcache remote cookie store.
+    url: memcache://127.0.0.1
+```
+
+#### Redis session store
+
+```yaml
+auth:
+  type: rails
+  cookie: _app_session
+
+  rails:
+    # Redis remote cookie store
+    url: redis://127.0.0.1:6379
+    password: ""
+    max_idle: 80
+    max_active: 12000
+```
+
+### JWT Token Auth
 
 ```yaml
 auth:
   type: jwt
-  provider: auth0 #none
-  cookie: _app_session
-  secret: abc335bfcfdb04e50db5bb0a4d67ab9
-  public_key_file: /secrets/public_key.pem
-  public_key_type: ecdsa #rsa
+
+  jwt:
+    # the two providers are 'auth0' and 'none'
+    provider: auth0 
+    secret: abc335bfcfdb04e50db5bb0a4d67ab9
+    public_key_file: /secrets/public_key.pem
+    public_key_type: ecdsa #rsa
 ```
 
 For JWT tokens we currently support tokens from a provider like Auth0
@@ -350,32 +405,170 @@ We can get the JWT token either from the `authorization` header where we expect 
 
 For validation a `secret` or a public key (ecdsa or rsa) is required. When using public keys they have to be in a PEM format file.
 
-## Deploying Super Graph
+## Easy to setup
 
-How do I deploy the Super Graph service with my existing rails app? You have several options here. Esentially you need to ensure your app's session cookie will be passed to this service. 
+Configuration files can either be in YAML or JSON their names are derived from the `GO_ENV` variable, for example `GO_ENV=prod` will cause the `prod.yaml` config file to be used. or `GO_ENV=dev` will use the `dev.yaml`. A path to look for the config files in can be specified using the `-path <folder>` command line argument.
 
-#### Custom Docker Image
+We're tried to ensure that the config file is self documenting and easy to work with.
 
-Create a `Dockerfile` like the one below to roll your own
-custom Super Graph docker image. And to build it `docker build -t my-super-graph .`
+```yaml
+title: Super Graph Development
+host_port: 0.0.0.0:8080
+web_ui: true
+debug_level: 1
+enable_tracing: false
 
-```docker
-FROM dosco/super-graph:latest
-WORKDIR /app
-COPY *.yml ./
+# Throw a 401 on auth failure for queries that need auth
+# valid values: always, per_query, never
+auth_fail_block: never
+
+# Postgres related environment Variables
+# SG_DATABASE_HOST
+# SG_DATABASE_PORT
+# SG_DATABASE_USER
+# SG_DATABASE_PASSWORD
+
+# Auth related environment Variables
+# SG_AUTH_RAILS_COOKIE_SECRET_KEY_BASE
+# SG_AUTH_RAILS_REDIS_URL
+# SG_AUTH_RAILS_REDIS_PASSWORD
+# SG_AUTH_JWT_PUBLIC_KEY_FILE
+
+# inflections:
+#   person: people
+#   sheep: sheep
+
+auth:
+  # Can be 'rails' or 'jwt'
+  type: rails
+  cookie: _app_session
+
+  # Comment this out if you want to disable setting
+  # the user_id via a header. Good for testing
+  header: X-User-ID
+
+  rails:
+    # Rails version this is used for reading the
+    # various cookies formats.
+    version: 5.2
+
+    # Found in 'Rails.application.config.secret_key_base'
+    secret_key_base: 0a248500a64c01184edb4d7ad3a805488f8097ac761b76aaa6c17c01dcb7af03a2f18ba61b2868134b9c7b79a122bc0dadff4367414a2d173297bfea92be5566
+
+    # Remote cookie store. (memcache or redis)
+    # url: redis://127.0.0.1:6379
+    # password: test
+    # max_idle: 80,
+    # max_active: 12000,
+
+    # In most cases you don't need these
+    # salt: "encrypted cookie"
+    # sign_salt: "signed encrypted cookie"
+    # auth_salt: "authenticated encrypted cookie"
+
+  # jwt:
+  #   provider: auth0
+  #   secret: abc335bfcfdb04e50db5bb0a4d67ab9
+  #   public_key_file: /secrets/public_key.pem
+  #   public_key_type: ecdsa #rsa
+
+database:
+  type: postgres
+  host: db
+  port: 5432
+  dbname: app_development
+  user: postgres
+  password: ''
+  # pool_size: 10
+  # max_retries: 0
+  # log_level: "debug"
+
+  # Define variables here that you want to use in filters
+  variables:
+    account_id: "select account_id from users where id = $user_id"
+
+  # Define defaults to for the field key and values below
+  defaults:
+    filter: ["{ user_id: { eq: $user_id } }"]
+
+    # Fields and table names that you wish to block
+    blacklist:
+      - ar_internal_metadata
+      - schema_migrations
+      - secret
+      - password
+      - encrypted
+      - token
+
+  fields:
+    - name: users
+      # This filter will overwrite defaults.filter
+      filter: ["{ id: { eq: $user_id } }"]
+
+    - name: products
+      # Multiple filters are AND'd together
+      filter: [
+        "{ price: { gt: 0 } }",
+        "{ price: { lt: 8 } }"
+      ]
+
+    - name: customers
+      # No filter is used for this field not
+      # even defaults.filter
+      filter: none
+
+    - # You can create new fields that have a
+      # real db table backing them
+      name: me
+      table: users
+      filter: ["{ id: { eq: $user_id } }"]
+
+    # - name: posts
+    #   filter: ["{ account_id: { _eq: $account_id } }"]
 ```
 
-#### Deploy under a subdomain
-For this to work you have to ensure that the option `:domain => :all` is added to your rails app config `Application.config.session_store` this will cause your rails app to create session cookies that can be shared with sub-domains. More info here <http://excid3.com/blog/sharing-a-devise-user-session-across-subdomains-with-rails-3/>
+If deploying into environments like Kubernetes it's useful to be able to configure things like secrets and hosts though environment variables therfore we expose the below environment variables. This is escpecially useful for secrets since they are usually injected in via a secrets management framework ie. Kubernetes Secrets
 
-#### With an NGINX loadbalancer
-I'm sure you know how to configure it so that the Super Graph endpoint path `/api/v1/graphql` is routed to wherever you have this service installed within your architecture.
+Keep in mind any value can be overwritten using environment variables for example `auth.jwt.public_key_type` converts to `SG_AUTH_JWT_PUBLIC_KEY_TYPE`. In short prefix `SG_`, upper case and all `.` should changed to `_`.
 
-#### On Kubernetes
-If your Rails app runs on Kubernetes then ensure you have an ingress config deployed that points the path to the service that you have deployed Super Graph under.
+#### Postgres environment variables
+```bash
+SG_DATABASE_HOST
+SG_DATABASE_PORT
+SG_DATABASE_USER
+SG_DATABASE_PASSWORD
+```
 
-#### We use JWT tokens like those from Auth0
-In that case deploy under a subdomain and configure this service to use JWT authentication. You will need the public key file or secret key. Ensure your web app passes the JWT token with every GQL request in the Authorize header as a `bearer` token.
+#### Auth environment variables
+```bash
+SG_AUTH_RAILS_COOKIE_SECRET_KEY_BASE
+SG_AUTH_RAILS_REDIS_URL
+SG_AUTH_RAILS_REDIS_PASSWORD
+SG_AUTH_JWT_PUBLIC_KEY_FILE
+```
+
+## Developing Super Graph
+
+If you want to build and run Super Graph from code then the below commands will build the web ui and launch Super Graph in developer mode with a watcher to rebuild on code changes. And the demo rails app is also launched to make it essier to test changes.
+
+```bash
+
+# yarn is needed to build the web ui
+brew install yarn
+
+# yarn install dependencies and build the web ui
+(cd web && yarn install && yarn build)
+
+# generate some stuff the go code needs
+go generate ./...
+
+# do this the only the time to setup the database
+docker-compose run web rake db:create db:migrate
+
+# start super graph in development mode with a change watcher
+docker-compose up
+
+```
 
 ## MIT License
 
